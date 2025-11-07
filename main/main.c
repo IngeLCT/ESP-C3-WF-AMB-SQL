@@ -27,9 +27,9 @@
 #include "captive_manager.h"
 
 #include "nvs_flash.h"
-#include "esp_log.h"
 #include "wifi_store.h"
 
+// Prototipos opcionales
 void geoapify_fetch_once_wifi_unwired(void);
 
 #define SENSOR_TASK_STACK 10240
@@ -62,7 +62,7 @@ static bool wifi_reconnect_blocking(uint32_t max_wait_ms) {
         if (xTaskGetTickCount() > deadline) break;
     }
     bool ok = wifi_is_connected();
-    ESP_LOGI(TAG, "%s", ok ? "WiFi restaurado" : "Sin WiFi tras ventana de reconexion");
+    ESP_LOGI(TAG, "%s", ok ? "WiFi restaurado" : "Sin WiFi tras ventana de reconexión");
     return ok;
 }
 
@@ -101,7 +101,7 @@ static void init_sntp_and_time(void) {
     for (int i = 0; i < 100; ++i) {
         time_t now = 0;
         time(&now);
-        if (now > 1609459200) break;
+        if (now > 1609459200) break; // 2021-01-01
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
@@ -119,17 +119,12 @@ void sensor_task(void *pv) {
 
     bool first_send = true;
 
-    //geoapify_fetch_once_wifi_unwired();
+    // geoapify_fetch_once_wifi_unwired(); // si lo usas, descomenta
     app_init_nvs();         // 1) NVS listo antes de usar wifi_store_*
     app_cargar_ubicacion(); // 2) Leer y dejar en g_ubicacion
 
-    if (firebase_init() != 0) {
-        ESP_LOGE(TAG, "Error inicializando Firebase");
-        vTaskDelete(NULL);
-        return;
-    }
-    
     vTaskDelay(pdMS_TO_TICKS(1000));
+    // Replicar "delete on boot" ahora en SQL
     hostinger_delete_all_for_device(DEVICE_ID);
 
     // 1 muestra/minuto, envío cada 5 min
@@ -142,30 +137,21 @@ void sensor_task(void *pv) {
     uint32_t sum_co2 = 0;
     char last_fecha_str[20] = "";
 
+    // En Firebase hacías refresh de token cada 50 min; en Hostinger no hace falta.
     const int64_t REFRESH_US = minutes_to_us(50);
     int64_t next_refresh_us = esp_timer_get_time() + REFRESH_US;
-
-    bool refresh_overdue = false; // hubo un refresh vencido mientras no había Wi-Fi
+    bool refresh_overdue = false; // solo mantiene la misma lógica de temporizador (no-op)
 
     while (1) {
-        // === (A) Gestion de refresh de token ligada a la conectividad ===
+        // === (A) Temporizador "dummy" de refresh para mantener ritmo del bucle ===
         int64_t now_us = esp_timer_get_time();
         bool refresh_due = (now_us >= next_refresh_us);
-
         if (refresh_due) {
             if (wifi_is_connected()) {
-                ESP_LOGI(TAG, "Refrescando token (50m)...");
-                int r = 0 /*hostinger: no token*/;
-                if (r == 0) {
-                    ESP_LOGI(TAG, "Token refresh OK");
-                    next_refresh_us = esp_timer_get_time() + REFRESH_US; // reprograma desde ahora
-                    refresh_overdue = false;
-                } else {
-                    ESP_LOGW(TAG, "Fallo refresh token (%d). Reintento cuando haya red.", r);
-                    // no movemos el next_refresh_us para reintentar pronto
-                }
+                ESP_LOGI(TAG, "Tick 50m (sin refresh de token en Hostinger)");
+                next_refresh_us = esp_timer_get_time() + REFRESH_US;
+                refresh_overdue = false;
             } else {
-                // no hay Wi-Fi: marca pendiente
                 refresh_overdue = true;
             }
         }
@@ -178,18 +164,11 @@ void sensor_task(void *pv) {
                 vTaskDelay(pdMS_TO_TICKS(WIFI_BACKOFF_IDLE_MS));
                 continue; // NO leer, NO acumular, NO enviar
             }
-            // Recién recuperado Wi-Fi: si había refresh pendiente o ya venció, hazlo AHORA
+            // Recién recuperado Wi-Fi: si había "refresh" pendiente, solo reprograma el timer
             now_us = esp_timer_get_time();
             if (refresh_overdue || now_us >= next_refresh_us) {
-                ESP_LOGI(TAG, "Red restaurada: refrescando token pendiente...");
-                int r = 0 /*hostinger: no token*/;
-                if (r == 0) {
-                    ESP_LOGI(TAG, "Token refresh OK tras reconexión");
-                    next_refresh_us = esp_timer_get_time() + REFRESH_US;
-                    refresh_overdue = false;
-                } else {
-                    ESP_LOGW(TAG, "Fallo refresh tras reconexión (%d). Continuo y reintento luego.", r);
-                }
+                next_refresh_us = esp_timer_get_time() + REFRESH_US;
+                refresh_overdue = false;
             }
         }
 
@@ -272,11 +251,6 @@ void sensor_task(void *pv) {
             int batch_minutes = SAMPLES_PER_BATCH * SAMPLE_EVERY_MIN;
             ESP_LOGI(TAG, "JSON promedio %dm: %s", batch_minutes, json);
 
-            char clave_min[20];
-            strftime(clave_min, sizeof(clave_min), "%y-%m-%d_%H-%M-%S", &tm_info);
-            char path_put[64];
-            snprintf(path_put, sizeof(path_put), "/historial_mediciones/%s", clave_min);
-
             // === (D) Doble-check de Wi-Fi justo antes de enviar (evita perder el batch) ===
             if (!wifi_is_connected()) {
                 bool ok = wifi_reconnect_blocking(WIFI_RECONNECT_WINDOW_MS);
@@ -285,21 +259,18 @@ void sensor_task(void *pv) {
                     vTaskDelay(pdMS_TO_TICKS(WIFI_BACKOFF_IDLE_MS));
                     continue; // NO enviar, NO resetear acumuladores
                 }
-                // Tras reconectar, si había refresh pendiente, hazlo
+                // Tras reconectar, si había "refresh" pendiente, solo reprograma el timer
                 now_us = esp_timer_get_time();
                 if (refresh_overdue || now_us >= next_refresh_us) {
-                    int r = 0 /*hostinger: no token*/;
-                    if (r == 0) {
-                        next_refresh_us = esp_timer_get_time() + REFRESH_US;
-                        refresh_overdue = false;
-                    }
+                    next_refresh_us = esp_timer_get_time() + REFRESH_US;
+                    refresh_overdue = false;
                 }
             }
 
             ESP_LOGI(TAG, "SQL ingest (len=%d)", (int)strlen(json));
             hostinger_ingest_post(json);
 
-            // Retención aproximada (igual que tenías)
+            // Retención aproximada (igual que tenías, ahora contra SQL vía admin.php)
             const size_t MAX_BYTES = 10 * 1024 * 1024;
             static double   avg_size = 256.0;
             static uint32_t approx_count = 0;
@@ -325,7 +296,6 @@ void sensor_task(void *pv) {
 
         vTaskDelay(SAMPLE_DELAY_TICKS);
     }
-
 }
 
 // ---- Event handler (asegúrate de que coincide con la firma estándar) ----
@@ -348,8 +318,6 @@ void app_main(void) {
     esp_log_level_set("HTTP_CLIENT", ESP_LOG_VERBOSE);
     esp_log_level_set("esp-tls", ESP_LOG_VERBOSE);
     esp_log_level_set("tls", ESP_LOG_VERBOSE);
-    esp_log_level_set("FirebaseApp", ESP_LOG_VERBOSE);
-    esp_log_level_set("RTDB", ESP_LOG_VERBOSE);
 #endif
 
     captive_manager_cfg_t cfg = {
@@ -371,11 +339,11 @@ void app_main(void) {
 
     bool operational_started = false;
 
-    // Sensores y Firebase solo se inicializan cuando el portal ya no está activo
+    // Sensores solo se inicializan cuando el portal ya no está activo
     while (true) {
         if (!operational_started && captive_manager_get_state() == CAP_STATE_OPERATIONAL) {
             operational_started = true;
-            ESP_LOGI(TAG,"Red lista con internet. Iniciando SNTP, sensores y Firebase...");
+            ESP_LOGI(TAG,"Red lista con internet. Iniciando SNTP y sensores...");
             init_sntp_and_time();
             esp_err_t ret = sensors_init_all();
             if (ret != ESP_OK) {
