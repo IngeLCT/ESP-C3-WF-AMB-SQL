@@ -5,3 +5,4 @@ idf_component_register(
 )
 # Para acceder a Privado.h desde este componente
 target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_SOURCE_DIR}/main")
+target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_11)
