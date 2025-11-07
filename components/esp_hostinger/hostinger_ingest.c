@@ -10,6 +10,19 @@
 
 static const char* TAG = "HOST_ING";
 
+#define HTTP_BODY_DEBUG 0   // 1 = imprime hasta 256 bytes del body; 0 = apagado
+
+#if HTTP_BODY_DEBUG
+static esp_err_t http_evt(esp_http_client_event_t *evt) {
+    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
+        int n = evt->data_len > 256 ? 256 : evt->data_len;
+        char buf[260]; memcpy(buf, evt->data, n); buf[n] = 0;
+        ESP_LOGW("HTTP_BODY", "%s", buf);
+    }
+    return ESP_OK;
+}
+#endif
+
 // Si el JSON no trae "device_id", lo inyectamos.
 static char* ensure_device_id(const char* body_in) {
     if (!body_in) body_in = "{}";
@@ -38,29 +51,16 @@ static char* ensure_device_id(const char* body_in) {
     return out;
 }
 
-static esp_err_t http_evt(esp_http_client_event_t *evt) {
-    switch (evt->event_id) {
-        case HTTP_EVENT_ON_DATA:
-            if (evt->data_len > 0) {
-                // imprime hasta 256 bytes del body
-                int n = evt->data_len > 256 ? 256 : evt->data_len;
-                char buf[260]; memcpy(buf, evt->data, n); buf[n] = 0;
-                ESP_LOGW("HTTP_BODY", "%s", buf);
-            }
-            break;
-        default: break;
-    }
-    return ESP_OK;
-}
-
 static int do_post_json(const char* url, const char* json_body) {
     esp_http_client_config_t cfg = {
         .url = url,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 15000,
         .disable_auto_redirect = true,
-        .user_agent = "curl/8.6.0",
-        .event_handler = http_evt, 
+    #if HTTP_BODY_DEBUG
+        .event_handler = http_evt,
+    #endif
+    
     };
     esp_http_client_handle_t cli = esp_http_client_init(&cfg);
     if (!cli) return -2;
