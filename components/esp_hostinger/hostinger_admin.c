@@ -54,7 +54,7 @@ static int post_json(const char* url, const char* json_body) {
 }
 
 int hostinger_delete_all_for_device(const char* device_id) {
-    const char* url = "https://ambiente.sensorwatts-energia.com/api/admin.php";
+    const char* url = "https://ambiente01.sensorwatts-energia.com/api/admin.php";
     char body[256];
     snprintf(body, sizeof(body), "{\"op\":\"delete_all\",\"device_id\":\"%s\"}", device_id ? device_id : DEVICE_ID);
     int rc = post_json(url, body);
@@ -63,7 +63,7 @@ int hostinger_delete_all_for_device(const char* device_id) {
 }
 
 int hostinger_trim_oldest_batch(const char* device_id, int batch_size) {
-    const char* url = "https://ambiente.sensorwatts-energia.com/api/admin.php";
+    const char* url = "https://ambiente01.sensorwatts-energia.com/api/admin.php";
     char body[256];
     snprintf(body, sizeof(body), "{\"op\":\"trim_oldest\",\"device_id\":\"%s\",\"batch_size\":%d}",
              device_id ? device_id : DEVICE_ID, batch_size > 0 ? batch_size : 50);
