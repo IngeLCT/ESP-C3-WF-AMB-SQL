@@ -728,11 +728,11 @@ static void start_mdns_service(void) {
     static bool mdns_started = false;
     if (mdns_started) return;
     if (mdns_init() == ESP_OK) {
-        mdns_hostname_set("LCTAmbiente01");
-        mdns_instance_name_set("LCTAmbiente01");
+        mdns_hostname_set("LCTAmbiente02");
+        mdns_instance_name_set("LCTAmbiente02");
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
         mdns_started = true;
-        ESP_LOGI(TAG, "mDNS started as LCTAmbiente01.local");
+        ESP_LOGI(TAG, "mDNS started as LCTAmbiente02.local");
     } else {
         ESP_LOGW(TAG, "mDNS init failed");
     }
