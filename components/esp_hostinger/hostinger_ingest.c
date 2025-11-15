@@ -85,7 +85,7 @@ static int do_post_json(const char* url, const char* json_body) {
 int hostinger_ingest_post(const char* json_utf8) {
     char* body = ensure_device_id(json_utf8);
     if (!body) return -1;
-    int rc = do_post_json(HOSTINGER_API_URL, body);
+    int rc = do_post_json(HOSTINGER_URL_INGEST, body);
     free(body);
     ESP_LOGI(TAG, "INGEST => %d", rc);
     return rc;
