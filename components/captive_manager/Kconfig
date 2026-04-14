@@ -38,4 +38,8 @@ menu "Captive Manager"
     config CAPTIVE_MANAGER_STARTUP_CHECK_DELAY_MS
         int "Delay inicial (ms) antes del primer chequeo tras IP guardada"
         default 1500
+
+    config CAPTIVE_MANAGER_BOOT_GRACE_MS
+        int "Ventana de gracia tras arranque (ms) antes de entrar a recaptive"
+        default 180000
 endmenu

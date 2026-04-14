@@ -29,6 +29,10 @@
 #include "nvs_flash.h"
 #include "wifi_store.h"
 
+#ifndef CONFIG_CAPTIVE_MANAGER_BOOT_GRACE_MS
+#define CONFIG_CAPTIVE_MANAGER_BOOT_GRACE_MS 180000
+#endif
+
 // Prototipos opcionales
 void geoapify_fetch_once_wifi_unwired(void);
 
@@ -329,7 +333,8 @@ void app_main(void) {
         .max_scan_aps = CONFIG_CAPTIVE_MANAGER_MAX_SCAN_APS,
         .conn_max_attempts = CONFIG_CAPTIVE_MANAGER_CONN_MAX_ATTEMPTS,
         .conn_retry_delay_ms = CONFIG_CAPTIVE_MANAGER_CONN_RETRY_DELAY_MS,
-        .startup_check_delay_ms = CONFIG_CAPTIVE_MANAGER_STARTUP_CHECK_DELAY_MS
+        .startup_check_delay_ms = CONFIG_CAPTIVE_MANAGER_STARTUP_CHECK_DELAY_MS,
+        .boot_grace_ms = CONFIG_CAPTIVE_MANAGER_BOOT_GRACE_MS
     };
 
     ESP_ERROR_CHECK(captive_manager_init(&cfg));

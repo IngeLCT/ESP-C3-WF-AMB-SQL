@@ -6,6 +6,7 @@
 #include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
+#include "esp_timer.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 #include "nvs_flash.h"
@@ -35,6 +36,7 @@ static int  g_verify_success = 0;
 static bool g_nat_enabled = false;
 static bool g_using_saved = false;
 static int  g_connect_attempts = 0;
+static int64_t g_boot_time_ms = 0;
 
 static bool g_connect_post_pending_save = false; // guardaremos al obtener IP
 static char g_pending_ssid[33];
@@ -60,6 +62,7 @@ static void shutdown_ap(void);
 static esp_err_t start_http_sta_minimal(void);
 static void stop_http_sta_minimal(void);
 static void start_mdns_service(void);
+static bool in_boot_grace_window(void);
 
 // State helpers
 const char* captive_manager_state_str(captive_state_t st) {
@@ -115,9 +118,18 @@ esp_err_t captive_manager_init(const captive_manager_cfg_t *cfg) {
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
     ESP_ERROR_CHECK(esp_wifi_start());
+    g_boot_time_ms = esp_timer_get_time() / 1000;
 
     set_state(CAP_STATE_IDLE);
     return ESP_OK;
+}
+
+static bool in_boot_grace_window(void) {
+    if (g_cfg.boot_grace_ms <= 0) {
+        return false;
+    }
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    return (now_ms - g_boot_time_ms) < g_cfg.boot_grace_ms;
 }
 
 static void start_with_saved_or_captive(void) {
@@ -270,12 +282,22 @@ void captive_manager_notify_sta_disconnected(int reason_code) {
 
     if (g_state == CAP_STATE_CONNECTING && g_using_saved) {
         g_connect_attempts++;
-        if (g_connect_attempts < g_cfg.conn_max_attempts) {
+        bool in_grace = in_boot_grace_window();
+        bool under_limit = (g_connect_attempts < g_cfg.conn_max_attempts);
+        if (in_grace || under_limit) {
+            if (!under_limit && in_grace) {
+                int64_t now_ms = esp_timer_get_time() / 1000;
+                int64_t elapsed_ms = now_ms - g_boot_time_ms;
+                int64_t remaining_ms = (int64_t)g_cfg.boot_grace_ms - elapsed_ms;
+                if (remaining_ms < 0) remaining_ms = 0;
+                ESP_LOGW(TAG,
+                         "Max reintentos alcanzado, pero sigue ventana de gracia de arranque (restan %lld ms). Reintentando...",
+                         (long long)remaining_ms);
+            }
             vTaskDelay(pdMS_TO_TICKS(g_cfg.conn_retry_delay_ms));
             esp_wifi_connect();
         } else {
-            ESP_LOGE(TAG,"Max reintentos alcanzado, limpiando credenciales y entrando a modo portal");
-            wifi_store_clear();
+            ESP_LOGE(TAG,"Sin conexion tras reintentos y ventana de gracia. Entrando a modo portal SIN borrar credenciales");
             captive_manager_enter_recaptive();
         }
     } else if (g_state == CAP_STATE_OPERATIONAL) {
