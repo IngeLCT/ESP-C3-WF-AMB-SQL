@@ -131,11 +131,12 @@ void sensor_task(void *pv) {
     // Replicar "delete on boot" ahora en SQL
     hostinger_delete_all_for_device(DEVICE_ID);
 
-    // 1 muestra/minuto, envío cada 5 min
-    const int SAMPLE_EVERY_MIN = 1;
-    const int SAMPLES_PER_BATCH = 5;
-    const TickType_t SAMPLE_DELAY_TICKS = pdMS_TO_TICKS(SAMPLE_EVERY_MIN * 60000);
-    int sample_count = 0;
+    // Cadencia GSM migrada a Wi-Fi: 1 muestra cada 5 s, envio cada 60 muestras (5 min)
+    const int SAMPLE_DELAY_MS = 5000;
+    const int SAMPLES_PER_BATCH = 60;
+    const TickType_t SAMPLE_DELAY_TICKS = pdMS_TO_TICKS(SAMPLE_DELAY_MS);
+    int sample_slot = 0;
+    int valid_samples = 0;
 
     double sum_pm1p0=0, sum_pm2p5=0, sum_pm4p0=0, sum_pm10p0=0, sum_voc=0, sum_nox=0, sum_avg_temp=0, sum_avg_hum=0;
     uint32_t sum_co2 = 0;
@@ -176,29 +177,8 @@ void sensor_task(void *pv) {
             }
         }
 
-        // === (C) Desde aquí solo con Wi-Fi OK ===
-        if (sensors_read(&data) == ESP_OK) {
-            sample_count++;
-            sum_pm1p0 += data.pm1p0;
-            sum_pm2p5 += data.pm2p5;
-            sum_pm4p0 += data.pm4p0;
-            sum_pm10p0 += data.pm10p0;
-            sum_voc += data.voc;
-            sum_nox += data.nox;
-            sum_avg_temp += data.avg_temp;
-            sum_avg_hum += data.avg_hum;
-            sum_co2 += data.co2;
-    #if LOG_EACH_SAMPLE
-            ESP_LOGI(TAG,
-                "Muestra %d/%d: PM1.0=%.2f PM2.5=%.2f PM4.0=%.2f PM10=%.2f VOC=%.1f NOx=%.1f CO2=%u Temp=%.2fC Hum=%.2f%%",
-                sample_count, SAMPLES_PER_BATCH, data.pm1p0, data.pm2p5, data.pm4p0, data.pm10p0,
-                data.voc, data.nox, data.co2, data.avg_temp, data.avg_hum);
-    #endif
-        } else {
-            ESP_LOGW(TAG, "Error leyendo sensores (batch %d)", sample_count);
-        }
-
-        if (sample_count >= SAMPLES_PER_BATCH) {
+        // === (C) Envio al completar la ventana de 60 muestras ===
+        if (sample_slot >= SAMPLES_PER_BATCH) {
             time_t now_epoch;
             struct tm tm_info;
             time(&now_epoch);
@@ -209,20 +189,22 @@ void sensor_task(void *pv) {
             strftime(fecha_actual, sizeof(fecha_actual), "%d-%m-%Y", &tm_info);
 
             SensorData avg = (SensorData){0};
-            double denom = (double)sample_count;
-            avg.pm1p0   = (float)(sum_pm1p0 / denom);
-            avg.pm2p5   = (float)(sum_pm2p5 / denom);
-            avg.pm4p0   = (float)(sum_pm4p0 / denom);
-            avg.pm10p0  = (float)(sum_pm10p0 / denom);
-            avg.voc     = (float)(sum_voc / denom);
-            avg.nox     = (float)(sum_nox / denom);
-            avg.avg_temp= (float)(sum_avg_temp / denom);
-            avg.avg_hum = (float)(sum_avg_hum / denom);
-            avg.co2     = (uint16_t)(sum_co2 / sample_count);
-            avg.scd_temp= avg.avg_temp;
-            avg.scd_hum = avg.avg_hum;
-            avg.sen_temp= avg.avg_temp;
-            avg.sen_hum = avg.avg_hum;
+            if (valid_samples > 0) {
+                double denom = (double)valid_samples;
+                avg.pm1p0   = (float)(sum_pm1p0 / denom);
+                avg.pm2p5   = (float)(sum_pm2p5 / denom);
+                avg.pm4p0   = (float)(sum_pm4p0 / denom);
+                avg.pm10p0  = (float)(sum_pm10p0 / denom);
+                avg.voc     = (float)(sum_voc / denom);
+                avg.nox     = (float)(sum_nox / denom);
+                avg.avg_temp= (float)(sum_avg_temp / denom);
+                avg.avg_hum = (float)(sum_avg_hum / denom);
+                avg.co2     = (uint16_t)(sum_co2 / valid_samples);
+                avg.scd_temp= avg.avg_temp;
+                avg.scd_hum = avg.avg_hum;
+                avg.sen_temp= avg.avg_temp;
+                avg.sen_hum = avg.avg_hum;
+            }
 
             char json[384];
             if (first_send) {
@@ -252,14 +234,14 @@ void sensor_task(void *pv) {
                 }
             }
 
-            int batch_minutes = SAMPLES_PER_BATCH * SAMPLE_EVERY_MIN;
+            int batch_minutes = (SAMPLE_DELAY_MS * SAMPLES_PER_BATCH) / 60000;
             ESP_LOGI(TAG, "JSON promedio %dm: %s", batch_minutes, json);
 
             // === (D) Doble-check de Wi-Fi justo antes de enviar (evita perder el batch) ===
             if (!wifi_is_connected()) {
                 bool ok = wifi_reconnect_blocking(WIFI_RECONNECT_WINDOW_MS);
                 if (!ok) {
-                    ESP_LOGW(TAG, "Se perdió WiFi antes de enviar; mantengo batch en RAM (sample_count=%d)", sample_count);
+                    ESP_LOGW(TAG, "Se perdió WiFi antes de enviar; mantengo ventana en RAM (slot=%d, valid=%d)", sample_slot, valid_samples);
                     vTaskDelay(pdMS_TO_TICKS(WIFI_BACKOFF_IDLE_MS));
                     continue; // NO enviar, NO resetear acumuladores
                 }
@@ -293,9 +275,34 @@ void sensor_task(void *pv) {
             }
 
             // Reset acumuladores SOLO después de enviar
-            sample_count = 0;
+            sample_slot = 0;
+            valid_samples = 0;
             sum_pm1p0=sum_pm2p5=sum_pm4p0=sum_pm10p0=sum_voc=sum_nox=sum_avg_temp=sum_avg_hum=0;
             sum_co2 = 0;
+        } else {
+            // === (D) Muestreo cada 5 s ===
+            if (sensors_read(&data) == ESP_OK) {
+                valid_samples++;
+                sum_pm1p0 += data.pm1p0;
+                sum_pm2p5 += data.pm2p5;
+                sum_pm4p0 += data.pm4p0;
+                sum_pm10p0 += data.pm10p0;
+                sum_voc += data.voc;
+                sum_nox += data.nox;
+                sum_avg_temp += data.avg_temp;
+                sum_avg_hum += data.avg_hum;
+                sum_co2 += data.co2;
+#if LOG_EACH_SAMPLE
+                ESP_LOGI(TAG,
+                    "Muestra %d/%d: PM1.0=%.2f PM2.5=%.2f PM4.0=%.2f PM10=%.2f VOC=%.1f NOx=%.1f CO2=%u Temp=%.2fC Hum=%.2f%%",
+                    sample_slot + 1, SAMPLES_PER_BATCH, data.pm1p0, data.pm2p5, data.pm4p0, data.pm10p0,
+                    data.voc, data.nox, data.co2, data.avg_temp, data.avg_hum);
+#endif
+            } else {
+                ESP_LOGW(TAG, "Error leyendo sensores (muestra %d/%d)", sample_slot + 1, SAMPLES_PER_BATCH);
+            }
+
+            sample_slot++;
         }
 
         vTaskDelay(SAMPLE_DELAY_TICKS);
