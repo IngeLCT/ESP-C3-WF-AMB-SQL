@@ -128,17 +128,19 @@ void sensor_task(void *pv) {
     app_cargar_ubicacion(); // 2) Leer y dejar en g_ubicacion
 
     vTaskDelay(pdMS_TO_TICKS(1000));
-    // Replicar "delete on boot" ahora en SQL
-    hostinger_delete_all_for_device(DEVICE_ID);
 
     // Cadencia GSM migrada a Wi-Fi: 1 muestra cada 5 s, envio cada 60 muestras (5 min)
     const int SAMPLE_DELAY_MS = 5000;
     const int SAMPLES_PER_BATCH = 60;
     const TickType_t SAMPLE_DELAY_TICKS = pdMS_TO_TICKS(SAMPLE_DELAY_MS);
     int sample_slot = 0;
-    int valid_samples = 0;
+    int scd41_ok_count_5m = 0;
+    int sen55_valid_count_5m = 0;
 
-    double sum_pm1p0=0, sum_pm2p5=0, sum_pm4p0=0, sum_pm10p0=0, sum_voc=0, sum_nox=0, sum_avg_temp=0, sum_avg_hum=0;
+    double sum_pm1p0 = 0, sum_pm2p5 = 0, sum_pm4p0 = 0, sum_pm10p0 = 0;
+    double sum_voc = 0, sum_nox = 0;
+    double sum_sen_temp = 0, sum_sen_hum = 0;
+    double sum_avg_temp = 0, sum_avg_hum = 0;
     uint32_t sum_co2 = 0;
     char last_fecha_str[20] = "";
 
@@ -189,21 +191,24 @@ void sensor_task(void *pv) {
             strftime(fecha_actual, sizeof(fecha_actual), "%d-%m-%Y", &tm_info);
 
             SensorData avg = (SensorData){0};
-            if (valid_samples > 0) {
-                double denom = (double)valid_samples;
-                avg.pm1p0   = (float)(sum_pm1p0 / denom);
-                avg.pm2p5   = (float)(sum_pm2p5 / denom);
-                avg.pm4p0   = (float)(sum_pm4p0 / denom);
-                avg.pm10p0  = (float)(sum_pm10p0 / denom);
-                avg.voc     = (float)(sum_voc / denom);
-                avg.nox     = (float)(sum_nox / denom);
-                avg.avg_temp= (float)(sum_avg_temp / denom);
-                avg.avg_hum = (float)(sum_avg_hum / denom);
-                avg.co2     = (uint16_t)(sum_co2 / valid_samples);
-                avg.scd_temp= avg.avg_temp;
-                avg.scd_hum = avg.avg_hum;
-                avg.sen_temp= avg.avg_temp;
-                avg.sen_hum = avg.avg_hum;
+            if (scd41_ok_count_5m > 0) {
+                avg.co2 = (uint16_t)(sum_co2 / scd41_ok_count_5m);
+            }
+
+            if (sen55_valid_count_5m > 0) {
+                double denom = (double)sen55_valid_count_5m;
+                avg.pm1p0    = (float)(sum_pm1p0 / denom);
+                avg.pm2p5    = (float)(sum_pm2p5 / denom);
+                avg.pm4p0    = (float)(sum_pm4p0 / denom);
+                avg.pm10p0   = (float)(sum_pm10p0 / denom);
+                avg.voc      = (float)(sum_voc / denom);
+                avg.nox      = (float)(sum_nox / denom);
+                avg.sen_temp = (float)(sum_sen_temp / denom);
+                avg.sen_hum  = (float)(sum_sen_hum / denom);
+                avg.avg_temp = (float)(sum_avg_temp / denom);
+                avg.avg_hum  = (float)(sum_avg_hum / denom);
+                avg.scd_temp = avg.avg_temp;
+                avg.scd_hum  = avg.avg_hum;
             }
 
             char json[384];
@@ -241,7 +246,7 @@ void sensor_task(void *pv) {
             if (!wifi_is_connected()) {
                 bool ok = wifi_reconnect_blocking(WIFI_RECONNECT_WINDOW_MS);
                 if (!ok) {
-                    ESP_LOGW(TAG, "Se perdió WiFi antes de enviar; mantengo ventana en RAM (slot=%d, valid=%d)", sample_slot, valid_samples);
+                    ESP_LOGW(TAG, "Se perdió WiFi antes de enviar; mantengo ventana en RAM (slot=%d, scd_ok=%d, sen_ok=%d)", sample_slot, scd41_ok_count_5m, sen55_valid_count_5m);
                     vTaskDelay(pdMS_TO_TICKS(WIFI_BACKOFF_IDLE_MS));
                     continue; // NO enviar, NO resetear acumuladores
                 }
@@ -256,51 +261,51 @@ void sensor_task(void *pv) {
             ESP_LOGI(TAG, "SQL ingest (len=%d)", (int)strlen(json));
             hostinger_ingest_post(json);
 
-            // Retención aproximada (igual que tenías, ahora contra SQL vía admin.php)
-            const size_t MAX_BYTES = 10 * 1024 * 1024;
-            static double   avg_size = 256.0;
-            static uint32_t approx_count = 0;
-            size_t item_len = strlen(json);
-            avg_size = (avg_size * 0.9) + (0.1 * (double)item_len);
-            approx_count++;
-            uint32_t max_items  = (uint32_t)(MAX_BYTES / (avg_size > 1.0 ? avg_size : 1.0));
-            uint32_t high_water = max_items + 50;
-            if (approx_count > high_water) {
-                int deleted = hostinger_trim_oldest_batch(DEVICE_ID, 50);
-                if (deleted > 0) {
-                    approx_count = (approx_count > (uint32_t)deleted) ? (approx_count - (uint32_t)deleted) : 0;
-                    ESP_LOGI(TAG, "Retención: borrados %d antiguos. approx_count=%u max_items=%u avg=%.1fB",
-                            deleted, approx_count, max_items, avg_size);
-                }
-            }
-
             // Reset acumuladores SOLO después de enviar
             sample_slot = 0;
-            valid_samples = 0;
-            sum_pm1p0=sum_pm2p5=sum_pm4p0=sum_pm10p0=sum_voc=sum_nox=sum_avg_temp=sum_avg_hum=0;
+            scd41_ok_count_5m = 0;
+            sen55_valid_count_5m = 0;
+            sum_pm1p0 = sum_pm2p5 = sum_pm4p0 = sum_pm10p0 = 0;
+            sum_voc = sum_nox = sum_sen_temp = sum_sen_hum = 0;
+            sum_avg_temp = sum_avg_hum = 0;
             sum_co2 = 0;
         } else {
             // === (D) Muestreo cada 5 s ===
-            if (sensors_read(&data) == ESP_OK) {
-                valid_samples++;
+            data = (SensorData){0};
+
+            esp_err_t scd_ret = sensors_read_scd41(&data);
+            int scd_diag = sensors_get_last_scd41_diag();
+            if (scd_ret == ESP_OK) {
+                sum_co2 += data.co2;
+                scd41_ok_count_5m++;
+            }
+
+            esp_err_t sen_ret = sensors_read_sen55(&data);
+            int sen_diag = sensors_get_last_sen55_diag();
+            if (sen_ret == ESP_OK) {
                 sum_pm1p0 += data.pm1p0;
                 sum_pm2p5 += data.pm2p5;
                 sum_pm4p0 += data.pm4p0;
                 sum_pm10p0 += data.pm10p0;
                 sum_voc += data.voc;
                 sum_nox += data.nox;
+                sum_sen_temp += data.sen_temp;
+                sum_sen_hum += data.sen_hum;
                 sum_avg_temp += data.avg_temp;
                 sum_avg_hum += data.avg_hum;
-                sum_co2 += data.co2;
-#if LOG_EACH_SAMPLE
-                ESP_LOGI(TAG,
-                    "Muestra %d/%d: PM1.0=%.2f PM2.5=%.2f PM4.0=%.2f PM10=%.2f VOC=%.1f NOx=%.1f CO2=%u Temp=%.2fC Hum=%.2f%%",
-                    sample_slot + 1, SAMPLES_PER_BATCH, data.pm1p0, data.pm2p5, data.pm4p0, data.pm10p0,
-                    data.voc, data.nox, data.co2, data.avg_temp, data.avg_hum);
-#endif
-            } else {
-                ESP_LOGW(TAG, "Error leyendo sensores (muestra %d/%d)", sample_slot + 1, SAMPLES_PER_BATCH);
+                sen55_valid_count_5m++;
             }
+#if LOG_EACH_SAMPLE
+            ESP_LOGI(TAG,
+                "Muestra %d/%d de 5m | SCD41: co2_raw=%u diag=%02d ret=%s | SEN55: diag=%02d ret=%s",
+                sample_slot + 1,
+                SAMPLES_PER_BATCH,
+                data.co2,
+                scd_diag,
+                esp_err_to_name(scd_ret),
+                sen_diag,
+                esp_err_to_name(sen_ret));
+#endif
 
             sample_slot++;
         }
@@ -341,7 +346,8 @@ void app_main(void) {
         .conn_max_attempts = CONFIG_CAPTIVE_MANAGER_CONN_MAX_ATTEMPTS,
         .conn_retry_delay_ms = CONFIG_CAPTIVE_MANAGER_CONN_RETRY_DELAY_MS,
         .startup_check_delay_ms = CONFIG_CAPTIVE_MANAGER_STARTUP_CHECK_DELAY_MS,
-        .boot_grace_ms = CONFIG_CAPTIVE_MANAGER_BOOT_GRACE_MS
+        .boot_grace_ms = CONFIG_CAPTIVE_MANAGER_BOOT_GRACE_MS,
+        .mdns_hostname = MDNS_HOSTNAME
     };
 
     ESP_ERROR_CHECK(captive_manager_init(&cfg));

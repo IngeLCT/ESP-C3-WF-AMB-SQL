@@ -750,11 +750,12 @@ static void start_mdns_service(void) {
     static bool mdns_started = false;
     if (mdns_started) return;
     if (mdns_init() == ESP_OK) {
-        mdns_hostname_set("LCTAmbiente02");
-        mdns_instance_name_set("LCTAmbiente02");
+        const char *hostname = (g_cfg.mdns_hostname && g_cfg.mdns_hostname[0]) ? g_cfg.mdns_hostname : "esp-ambiente";
+        mdns_hostname_set(hostname);
+        mdns_instance_name_set(hostname);
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
         mdns_started = true;
-        ESP_LOGI(TAG, "mDNS started as LCTAmbiente02.local");
+        ESP_LOGI(TAG, "mDNS started as %s.local", hostname);
     } else {
         ESP_LOGW(TAG, "mDNS init failed");
     }

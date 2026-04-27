@@ -2,6 +2,7 @@
 build/
 managed_components/
 *.bin
+!firmware/*.bin
 *.elf
 *.map
 

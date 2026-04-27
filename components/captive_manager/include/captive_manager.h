@@ -28,6 +28,7 @@ typedef struct {
     int conn_retry_delay_ms;
     int startup_check_delay_ms;
     int boot_grace_ms;
+    const char *mdns_hostname;
 } captive_manager_cfg_t;
 
 esp_err_t captive_manager_init(const captive_manager_cfg_t *cfg);

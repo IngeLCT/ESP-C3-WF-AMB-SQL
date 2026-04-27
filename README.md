@@ -1,65 +1,110 @@
-# ESP32-C3-WF-AMB
+# ESP-C3-WF-AMB-SQL
 
-Proyecto para **ESP32-C3** (ESP-IDF) orientado a **mediciones ambientales** con **conectividad Wi-Fi** y envío de datos a **Firebase Realtime Database**.  
-Incluye un **portal cautivo** con modo **AP+NAT (router)** para asistir en redes con **portal cautivo**, **verificación activa de conectividad a Internet** y soporte **mDNS** (opcional). Licencia **MIT**.
+Firmware para **ESP32-C3** con **ESP-IDF** orientado a medición ambiental, provisión Wi-Fi asistida y envío periódico de datos a un backend **Hostinger/PHP/SQL**.
 
----
+## Qué hace
 
-## ¿Qué hace?
+- Lee sensores ambientales por **I2C**:
+  - **SCD41**: CO2, temperatura y humedad
+  - **SEN55**: PM1.0, PM2.5, PM4.0, PM10, VOC, NOx, temperatura y humedad
+- Calcula **promedios locales** antes de transmitir.
+- Se conecta por **Wi-Fi** usando un flujo con portal cautivo propio.
+- Puede ayudar con redes que tienen **portal cautivo externo** mediante modo **AP + STA + NAT**.
+- Envía las lecturas por **HTTP POST** a un endpoint de ingesta en Hostinger.
+- Guarda en NVS:
+  - SSID
+  - contraseña
+  - ubicación textual del equipo
 
-- **Mide variables ambientales** (p. ej., PM1.0/2.5/4.0/10, VOC, NOx, CO₂, temperatura, humedad) y arma un **payload JSON** con las lecturas.  
-- **Configura Wi-Fi** sin hard-coding de credenciales mediante un **portal cautivo** propio (escaneo, selección de SSID y guardado persistente).  
-- **Verifica** si hay **salida a Internet**; si no la hay, habilita **AP+NAT** para que el usuario complete el **login del portal cautivo** desde su teléfono/PC.  
-- **Envía mediciones a Firebase** por **HTTP/REST**.  
-- **Intervalo de envío configurable** y **promedio local configurable**: el dispositivo acumula **N muestras** y **envía solo el promedio** para reducir ruido/uso de red.
+## Flujo general
 
----
+1. Arranca el **captive manager**.
+2. Si hay credenciales guardadas, intenta conectar en modo STA.
+3. Si no hay credenciales, levanta un **SoftAP** con portal local para configurar red y ubicación.
+4. Si la red requiere login externo, mantiene **AP+STA+NAT** para que el usuario complete el acceso.
+5. Cuando detecta internet operativa:
+   - sincroniza hora con SNTP
+   - inicializa sensores
+   - arranca la tarea de medición y envío
 
-## Requisitos
+## Muestreo y envío
 
-- **ESP-IDF 5.x** (recomendado 5.5.1) y **Python 3.11.x** para el toolchain.  
-- **Target**: `esp32c3`.  
-- **Firebase Realtime Database** operativo (URL y API-Key).  
-- (Opcional) **mDNS** habilitado si quieres acceso por `*.local`.
+La lógica actual del firmware es:
 
----
+- **1 muestra cada 5 segundos**
+- **60 muestras por lote**
+- **1 envío cada 5 minutos**
 
-## Funcionalidades
+Cada lote se promedia localmente antes de formar el JSON de salida.
 
-### 1) Captive Manager (portal cautivo)
+## JSON enviado
 
-- **SoftAP + portal web** para la provisión inicial (o recuperación).  
-- **Escaneo de redes** y lista de SSID; identificación de redes **abiertas** (sin contraseña) y **guardado persistente** en NVS.  
-- **Arranque inteligente**: si existen credenciales válidas y hay salida a Internet, **omite** el portal y continúa en **STA**.  
-- **Redirección tipo “cautivo”**: mientras está en AP, toda navegación apunta al portal local para configurar.  
-- **Reintentos / timeouts**: si la conexión falla, **reabre** el portal para re-provisión.
+El payload incluye, según corresponda:
 
-### 2) Verificación de Internet
+- `pm1p0`
+- `pm2p5`
+- `pm4p0`
+- `pm10p0`
+- `voc`
+- `nox`
+- `cTe`
+- `cHu`
+- `co2`
+- `hora`
+- `fecha` (cuando aplica)
+- `inicio` (primer envío tras arranque)
+- `ciudad`
+- `id`
 
-- Tras asociarse a la red, realiza **pruebas activas de conectividad** (DNS/HTTP con timeouts).  
-- Si **no hay salida** en varios intentos (configurable), cambia a estado de **asistencia** y/o **re-provisión** según corresponda.
+## Portal cautivo y conectividad
 
-### 3) Asistencia para portales cautivos (modo AP+NAT)
+El componente `captive_manager` implementa:
 
-- Cuando la red requiere **login** (portal cautivo), el dispositivo mantiene **AP+STA** y habilita **NAT** para que los clientes del AP naveguen “a través” del ESP hasta la red STA.  
-- El usuario se conecta al **AP del ESP** y realiza el **login** del portal.  
-- Una vez que las **pruebas de Internet** pasan el umbral (configurable), el dispositivo **apaga el AP** y queda **operativo en STA**.
+- portal web local para provisión Wi-Fi
+- almacenamiento persistente de credenciales y ubicación
+- verificación activa de conectividad a internet
+- asistencia para redes con portal cautivo usando **AP+STA+NAT**
+- soporte de **mDNS** configurable
 
-> **Nota:** El dispositivo **no automatiza** el login del portal; solo **facilita** el proceso con el patrón **AP+NAT**.
+## mDNS
 
-### 4) Medición y envío de datos (Firebase)
+El hostname mDNS se configura desde `main/Privado.h` mediante:
 
-- Lectura de **sensores ambientales** y **serialización JSON**.  
-- **Promedio local**: se acumulan **N muestras** (configurable) y se **envía un promedio** a la base para reducir ruido y uso de red.  
-- **Intervalo de envío** y **N de muestras** son **configurables** en el código principal de la app.  
-- Cliente **REST** ligero para **Firebase Realtime Database**.
+- `MDNS_HOSTNAME`
 
-### 5) mDNS (opcional)
+Ese valor se pasa al `captive_manager` y se anuncia como:
 
-- Posibilidad de anunciar **hostname** y servicio **HTTP** para acceso vía `http://<hostname>.local` en la LAN (si tu entorno soporta mDNS).  
+- `http://<MDNS_HOSTNAME>.local`
 
----
+(si la red/cliente soporta mDNS)
+
+## Archivo local requerido: `main/Privado.h`
+
+Este archivo no se versiona y debe definir al menos:
+
+```c
+#define DEVICE_ID            "ESP-C3-WF-AMB-SQL-01"
+#define MDNS_HOSTNAME        "LCTAmbiente02"
+#define HOSTINGER_API_KEY    "REEMPLAZAR_API_KEY"
+#define HOSTINGER_URL_INGEST "https://example.com/api/ingest.php"
+#define HOSTINGER_URL_ADMIN  "https://example.com/api/admin.php"
+```
+
+## Notas importantes
+
+- El firmware **ya no usa Firebase**.
+- El envío se hace contra backend **Hostinger/PHP/SQL**.
+- Se eliminó del flujo principal el uso de:
+  - `delete_all`
+  - `trim_oldest`
+- La ubicación queda fija hasta que el usuario la reconfigure desde el portal.
+
+## Dependencias
+
+- ESP-IDF 5.x
+- target: `esp32c3`
+- componente `espressif/mdns`
 
 ## Licencia
 
-Distribuido bajo **MIT**. Consulta el archivo `LICENSE` en el repositorio.
+Distribuido bajo licencia **MIT**. Revisa el archivo `LICENSE`.
