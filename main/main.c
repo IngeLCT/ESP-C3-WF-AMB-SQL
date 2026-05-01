@@ -134,7 +134,7 @@ void sensor_task(void *pv) {
     const int SAMPLES_PER_BATCH = 60;
     const TickType_t SAMPLE_DELAY_TICKS = pdMS_TO_TICKS(SAMPLE_DELAY_MS);
     int sample_slot = 0;
-    int scd41_ok_count_5m = 0;
+    int scd40_ok_count_5m = 0;
     int sen55_valid_count_5m = 0;
 
     double sum_pm1p0 = 0, sum_pm2p5 = 0, sum_pm4p0 = 0, sum_pm10p0 = 0;
@@ -191,8 +191,8 @@ void sensor_task(void *pv) {
             strftime(fecha_actual, sizeof(fecha_actual), "%d-%m-%Y", &tm_info);
 
             SensorData avg = (SensorData){0};
-            if (scd41_ok_count_5m > 0) {
-                avg.co2 = (uint16_t)(sum_co2 / scd41_ok_count_5m);
+            if (scd40_ok_count_5m > 0) {
+                avg.co2 = (uint16_t)(sum_co2 / scd40_ok_count_5m);
             }
 
             if (sen55_valid_count_5m > 0) {
@@ -246,7 +246,7 @@ void sensor_task(void *pv) {
             if (!wifi_is_connected()) {
                 bool ok = wifi_reconnect_blocking(WIFI_RECONNECT_WINDOW_MS);
                 if (!ok) {
-                    ESP_LOGW(TAG, "Se perdió WiFi antes de enviar; mantengo ventana en RAM (slot=%d, scd_ok=%d, sen_ok=%d)", sample_slot, scd41_ok_count_5m, sen55_valid_count_5m);
+                    ESP_LOGW(TAG, "Se perdió WiFi antes de enviar; mantengo ventana en RAM (slot=%d, scd_ok=%d, sen_ok=%d)", sample_slot, scd40_ok_count_5m, sen55_valid_count_5m);
                     vTaskDelay(pdMS_TO_TICKS(WIFI_BACKOFF_IDLE_MS));
                     continue; // NO enviar, NO resetear acumuladores
                 }
@@ -263,7 +263,7 @@ void sensor_task(void *pv) {
 
             // Reset acumuladores SOLO después de enviar
             sample_slot = 0;
-            scd41_ok_count_5m = 0;
+            scd40_ok_count_5m = 0;
             sen55_valid_count_5m = 0;
             sum_pm1p0 = sum_pm2p5 = sum_pm4p0 = sum_pm10p0 = 0;
             sum_voc = sum_nox = sum_sen_temp = sum_sen_hum = 0;
@@ -273,11 +273,11 @@ void sensor_task(void *pv) {
             // === (D) Muestreo cada 5 s ===
             data = (SensorData){0};
 
-            esp_err_t scd_ret = sensors_read_scd41(&data);
-            int scd_diag = sensors_get_last_scd41_diag();
+            esp_err_t scd_ret = sensors_read_scd40(&data);
+            int scd_diag = sensors_get_last_scd40_diag();
             if (scd_ret == ESP_OK) {
                 sum_co2 += data.co2;
-                scd41_ok_count_5m++;
+                scd40_ok_count_5m++;
             }
 
             esp_err_t sen_ret = sensors_read_sen55(&data);
@@ -297,7 +297,7 @@ void sensor_task(void *pv) {
             }
 #if LOG_EACH_SAMPLE
             ESP_LOGI(TAG,
-                "Muestra %d/%d de 5m | SCD41: co2_raw=%u diag=%02d ret=%s | SEN55: diag=%02d ret=%s",
+                "Muestra %d/%d de 5m | SCD40: co2_raw=%u diag=%02d ret=%s | SEN55: diag=%02d ret=%s",
                 sample_slot + 1,
                 SAMPLES_PER_BATCH,
                 data.co2,

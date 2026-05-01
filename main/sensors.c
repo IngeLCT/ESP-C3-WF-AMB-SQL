@@ -18,8 +18,10 @@
 #define SCD4X_ADDR              0x62
 #define SEN5X_ADDR              0x69
 
-#define SCD41_CO2_MIN           250
-#define SCD41_CO2_MAX           10000
+#define SCD40_CO2_OUTPUT_MIN    1
+#define SCD40_CO2_OUTPUT_MAX    40000
+#define SCD40_CO2_SPEC_MIN      400
+#define SCD40_CO2_SPEC_MAX      2000
 
 #define SEN55_READY_POLLS       30
 #define SEN55_READY_DELAY_MS    20
@@ -33,7 +35,7 @@ static i2c_master_dev_handle_t s_scd4x_dev = NULL;
 static i2c_master_dev_handle_t s_sen5x_dev = NULL;
 
 // Ultimo diagnostico por sensor
-static int s_last_scd41_diag = SENSOR_DIAG_OK;
+static int s_last_scd40_diag = SENSOR_DIAG_OK;
 static int s_last_sen55_diag = SENSOR_DIAG_OK;
 
 // ---------- Helpers de diagnostico ----------
@@ -45,8 +47,8 @@ static int map_i2c_err_to_diag(esp_err_t err, bool is_rx_stage) {
     return is_rx_stage ? SENSOR_DIAG_I2C_RX : SENSOR_DIAG_I2C_TX;
 }
 
-int sensors_get_last_scd41_diag(void) {
-    return s_last_scd41_diag;
+int sensors_get_last_scd40_diag(void) {
+    return s_last_scd40_diag;
 }
 
 int sensors_get_last_sen55_diag(void) {
@@ -54,7 +56,7 @@ int sensors_get_last_sen55_diag(void) {
 }
 
 void sensors_reset_diag(void) {
-    s_last_scd41_diag = SENSOR_DIAG_OK;
+    s_last_scd40_diag = SENSOR_DIAG_OK;
     s_last_sen55_diag = SENSOR_DIAG_OK;
 }
 
@@ -78,12 +80,12 @@ static esp_err_t scd4x_start_measurement(void) {
 }
 
 static esp_err_t scd4x_read_measurement(uint16_t *co2, float *temperature, float *humidity) {
-    s_last_scd41_diag = SENSOR_DIAG_OK;
+    s_last_scd40_diag = SENSOR_DIAG_OK;
 
     uint8_t cmd[2] = {0xEC, 0x05};
     esp_err_t ret = i2c_master_transmit(s_scd4x_dev, cmd, sizeof(cmd), pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        s_last_scd41_diag = map_i2c_err_to_diag(ret, false);
+        s_last_scd40_diag = map_i2c_err_to_diag(ret, false);
         return ret;
     }
 
@@ -92,23 +94,31 @@ static esp_err_t scd4x_read_measurement(uint16_t *co2, float *temperature, float
     uint8_t data[9];
     ret = i2c_master_receive(s_scd4x_dev, data, sizeof(data), pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        s_last_scd41_diag = map_i2c_err_to_diag(ret, true);
+        s_last_scd40_diag = map_i2c_err_to_diag(ret, true);
         return ret;
     }
 
     if (sensirion_crc8(&data[0], 2) != data[2] ||
         sensirion_crc8(&data[3], 2) != data[5] ||
         sensirion_crc8(&data[6], 2) != data[8]) {
-        ESP_LOGW(TAG_SENS, "SCD41 CRC invalido");
-        s_last_scd41_diag = SENSOR_DIAG_CRC;
+        ESP_LOGW(TAG_SENS, "SCD40 CRC invalido");
+        s_last_scd40_diag = SENSOR_DIAG_CRC;
         return ESP_ERR_INVALID_CRC;
     }
 
     *co2 = ((uint16_t)data[0] << 8) | data[1];
-    if (*co2 == 0 || *co2 < SCD41_CO2_MIN || *co2 > SCD41_CO2_MAX) {
-        ESP_LOGW(TAG_SENS, "SCD41 CO2 fuera de rango: %u ppm", *co2);
-        s_last_scd41_diag = SENSOR_DIAG_OUT_OF_RANGE;
+    if (*co2 < SCD40_CO2_OUTPUT_MIN || *co2 > SCD40_CO2_OUTPUT_MAX) {
+        ESP_LOGW(TAG_SENS, "SCD40 CO2 fuera de rango fisico: %u ppm", *co2);
+        s_last_scd40_diag = SENSOR_DIAG_OUT_OF_RANGE;
         return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    if (*co2 < SCD40_CO2_SPEC_MIN || *co2 > SCD40_CO2_SPEC_MAX) {
+        ESP_LOGW(TAG_SENS,
+                 "SCD40 CO2 fuera del rango especificado de mejor precision (%u..%u ppm): %u ppm",
+                 SCD40_CO2_SPEC_MIN,
+                 SCD40_CO2_SPEC_MAX,
+                 *co2);
     }
 
     uint16_t raw_temp = ((uint16_t)data[3] << 8) | data[4];
@@ -117,7 +127,7 @@ static esp_err_t scd4x_read_measurement(uint16_t *co2, float *temperature, float
     *temperature = -45.0f + 175.0f * ((float)raw_temp / 65535.0f);
     *humidity    = 100.0f * ((float)raw_hum / 65535.0f);
 
-    s_last_scd41_diag = SENSOR_DIAG_OK;
+    s_last_scd40_diag = SENSOR_DIAG_OK;
     return ESP_OK;
 }
 
@@ -259,7 +269,7 @@ esp_err_t sensors_init_all(void) {
     return ESP_OK;
 }
 
-esp_err_t sensors_read_scd41(SensorData *out) {
+esp_err_t sensors_read_scd40(SensorData *out) {
     if (!out) return ESP_ERR_INVALID_ARG;
 
     uint16_t co2 = 0;
@@ -338,7 +348,7 @@ esp_err_t sensors_read_sen55(SensorData *out) {
 esp_err_t sensors_read(SensorData *out) {
     if (!out) return ESP_ERR_INVALID_ARG;
 
-    esp_err_t ret = sensors_read_scd41(out);
+    esp_err_t ret = sensors_read_scd40(out);
     if (ret != ESP_OK) return ret;
 
     ret = sensors_read_sen55(out);

@@ -37,7 +37,7 @@ typedef enum {
 esp_err_t sensors_init_all(void);
 
 // Lectura separada por sensor
-esp_err_t sensors_read_scd41(SensorData *out);
+esp_err_t sensors_read_scd40(SensorData *out);
 esp_err_t sensors_read_sen55(SensorData *out);
 
 // Wrapper: lee ambos sensores
@@ -57,6 +57,6 @@ void sensors_format_json(const SensorData *d,
 void sensors_set_city_state(const char *city_state);
 
 // Getters de diagnostico del ultimo intento
-int sensors_get_last_scd41_diag(void);
+int sensors_get_last_scd40_diag(void);
 int sensors_get_last_sen55_diag(void);
 void sensors_reset_diag(void);
