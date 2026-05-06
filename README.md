@@ -99,6 +99,21 @@ Este archivo no se versiona y debe definir al menos:
   - `trim_oldest`
 - La ubicación queda fija hasta que el usuario la reconfigure desde el portal.
 
+## Diagrama de bloques EcoSensor
+
+Se agregó el diagrama base de la nueva arquitectura local EcoSensor dentro del repo:
+
+- `docs/diagramas/ecosensor-bloques.d2`
+- `docs/diagramas/ecosensor-bloques.svg`
+
+Resumen conceptual:
+
+- **ESP32-C3 + microSD** como fuente principal de datos
+- **CSV local** como registro fuente
+- **sincronización incremental por ID** hacia servidor local
+- **NiceGUI + SQLite** como visualización y respaldo
+- **hora inicial desde servidor** con corrección opcional por NTP
+
 ## Dependencias
 
 - ESP-IDF 5.x
