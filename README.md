@@ -99,9 +99,16 @@ Este archivo no se versiona y debe definir al menos:
   - `trim_oldest`
 - La ubicación queda fija hasta que el usuario la reconfigure desde el portal.
 
-## Diagrama de bloques EcoSensor
+## Diagramas EcoSensor
 
-Se agregó el diagrama base de la nueva arquitectura local EcoSensor dentro del repo:
+El diagrama de EcoSensor quedó dividido en dos vistas más claras dentro del repo:
+
+- `docs/diagramas/ecosensor-arquitectura-general.d2`
+- `docs/diagramas/ecosensor-arquitectura-general.svg`
+- `docs/diagramas/ecosensor-flujo-sincronizacion.d2`
+- `docs/diagramas/ecosensor-flujo-sincronizacion.svg`
+
+Además se conserva la versión combinada original:
 
 - `docs/diagramas/ecosensor-bloques.d2`
 - `docs/diagramas/ecosensor-bloques.svg`

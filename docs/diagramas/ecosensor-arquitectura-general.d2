@@ -1,0 +1,65 @@
+direction: right
+
+title: "EcoSensor local - arquitectura general"
+
+usuario: Usuario
+red: "Red local"
+
+esp32: {
+  label: "Nodo ESP32-C3"
+  style.fill: "#E8F1F8"
+
+  wm: "WiFi Manager AP"
+  cfg: "Config local"
+  reloj: "Reloj base"
+  ntp: "NTP opcional"
+  muestreo: "Muestreo"
+  avg: "Promedios 5 min"
+  ids: "ID incremental"
+  csv: "CSV en microSD"
+  sync: "Cliente sync"
+}
+
+servidor: {
+  label: "Servidor local"
+  style.fill: "#EEF4EA"
+
+  api: "API recepción"
+  hora: "Hora inicial"
+  syncsrv: "Sync faltantes"
+  db: "SQLite"
+  ui: "NiceGUI"
+}
+
+clienteweb: {
+  label: "Clientes en red"
+  style.fill: "#F7F3EA"
+
+  navegador: Navegador
+}
+
+usuario -> wm: configuración inicial
+wm -> cfg: guarda red e IP
+cfg -> red: conexión WiFi
+red -> ntp: internet opcional
+hora -> reloj: tiempo base
+ntp -> reloj: corrección
+
+muestreo -> avg: bloque de 5 min
+avg -> ids: genera registro
+ids -> csv: persistencia
+ids -> sync: cola de envío
+
+sync -> api: HTTP local
+api -> db: copia local
+api -> ui: datos vivos
+syncsrv -> sync: solicita faltantes
+
+navegador -> ui: consulta dashboard
+usuario -> navegador: acceso por IP:puerto
+reloj -> ids: timestamp
+
+csv.style.fill: "#FFF4D6"
+db.style.fill: "#FFF4D6"
+ui.style.fill: "#EDE3F7"
+api.style.fill: "#EDE3F7"

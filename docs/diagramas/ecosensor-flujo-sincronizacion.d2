@@ -1,0 +1,45 @@
+direction: right
+
+title: "EcoSensor local - flujo de sincronización"
+
+esp32: {
+  label: "ESP32-C3"
+  style.fill: "#E8F1F8"
+
+  muestreo: "Muestreo"
+  avg: "Promedio 5 min"
+  ids: "ID incremental"
+  csv: "CSV en microSD"
+  sync: "Sync por ID"
+}
+
+servidor: {
+  label: "Servidor local"
+  style.fill: "#EEF4EA"
+
+  hora: "Hora inicial"
+  api: "API recepción"
+  db: "SQLite"
+  syncsrv: "Último ID recibido"
+  ui: "NiceGUI"
+}
+
+hora -> ids: base temporal inicial
+muestreo -> avg: acumula muestras
+avg -> ids: cierra registro
+ids -> csv: guarda fuente principal
+ids -> sync: marca pendiente
+
+sync -> api: envío de nuevos IDs
+api -> db: replica local
+api -> syncsrv: actualiza último ID
+syncsrv -> sync: pide faltantes
+sync -> csv: relee registros pendientes
+
+api -> ui: refresca dashboard
+csv -> sync: origen para reintento
+
+db.style.fill: "#FFF4D6"
+csv.style.fill: "#FFF4D6"
+ui.style.fill: "#EDE3F7"
+api.style.fill: "#EDE3F7"
